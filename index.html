@@ -17,7 +17,7 @@
       color: #1d1d1f;
     }
     .glass-header {
-      background: rgba(255, 255, 255, 0.8);
+      background: rgba(255, 255, 255, 0.85);
       backdrop-filter: blur(20px);
       -webkit-backdrop-filter: blur(20px);
     }
@@ -35,7 +35,7 @@
   <div id="root"></div>
 
   <script type="text/babel">
-    const { useState, useEffect, useMemo, useCallback } = React;
+    const { useState, useEffect, useMemo } = React;
 
     const CATEGORIES = [
       { id: 'all', name: 'すべて' },
@@ -58,16 +58,21 @@
       { id: '4', name: 'アボカド', category: 'fresh', expiryDate: getFormattedDate(5), quantity: '2個' }
     ];
 
-    const STORAGE_KEYS = { FRIDGE: 'tabegoro_v2_items', SHOPPING: 'tabegoro_v2_shop' };
+    const STORAGE_KEYS = { FRIDGE: 'tabegoro_v3_items', SHOPPING: 'tabegoro_v3_shop' };
 
     function App() {
       const [items, setItems] = useState([]);
       const [shoppingList, setShoppingList] = useState([]);
       const [activeTab, setActiveTab] = useState('fridge');
       const [selectedCategory, setSelectedCategory] = useState('all');
-      const [searchQuery, setSearchQuery] = useState('');
-      const [isAddModalOpen, setIsAddModalOpen] = useState(false);
-      const [formData, setFormData] = useState({ name: '', category: 'fresh', expiryDate: getFormattedDate(3), quantity: '1' });
+      
+      // モーダル状態
+      const [isFridgeModalOpen, setIsFridgeModalOpen] = useState(false);
+      const [isShoppingModalOpen, setIsShoppingModalOpen] = useState(false);
+
+      // フォーム状態
+      const [fridgeFormData, setFridgeFormData] = useState({ name: '', category: 'fresh', expiryDate: getFormattedDate(3), quantity: '1' });
+      const [shoppingInput, setShoppingInput] = useState('');
 
       useEffect(() => {
         try {
@@ -95,18 +100,26 @@
 
       const filteredItems = useMemo(() => {
         return items.filter(i => {
-          const matchCat = selectedCategory === 'all' || i.category === selectedCategory;
-          const matchQuery = i.name.toLowerCase().includes(searchQuery.toLowerCase());
-          return matchCat && matchQuery;
+          return selectedCategory === 'all' || i.category === selectedCategory;
         }).sort((a,b) => new Date(a.expiryDate) - new Date(b.expiryDate));
-      }, [items, selectedCategory, searchQuery]);
+      }, [items, selectedCategory]);
 
-      const handleAddItem = (e) => {
+      // 冷蔵庫アイテム追加
+      const handleAddFridgeItem = (e) => {
         e.preventDefault();
-        if (!formData.name.trim()) return;
-        setItems(prev => [{ id: Date.now().toString(), ...formData }, ...prev]);
-        setIsAddModalOpen(false);
-        setFormData({ name: '', category: 'fresh', expiryDate: getFormattedDate(3), quantity: '1' });
+        if (!fridgeFormData.name.trim()) return;
+        setItems(prev => [{ id: Date.now().toString(), ...fridgeFormData }, ...prev]);
+        setIsFridgeModalOpen(false);
+        setFridgeFormData({ name: '', category: 'fresh', expiryDate: getFormattedDate(3), quantity: '1' });
+      };
+
+      // 買い物アイテム追加
+      const handleAddShoppingItem = (e) => {
+        e.preventDefault();
+        if (!shoppingInput.trim()) return;
+        setShoppingList(prev => [...prev, { id: Date.now().toString(), name: shoppingInput.trim() }]);
+        setIsShoppingModalOpen(false);
+        setShoppingInput('');
       };
 
       const handleConsumeItem = (id, addToShop = false) => {
@@ -125,33 +138,39 @@
           <header className="sticky top-0 z-30 glass-header border-b border-neutral-200/50 px-6 pt-12 pb-4 transition-all">
             <div className="flex justify-between items-baseline mb-4">
               <div>
-                <span className="text-[11px] font-semibold tracking-widest text-neutral-400 uppercase">Refrigerator</span>
-                <h1 className="text-2xl font-semibold tracking-tight text-neutral-900 mt-0.5">たべごろ</h1>
+                <span className="text-[11px] font-semibold tracking-widest text-neutral-400 uppercase">
+                  {activeTab === 'fridge' ? 'Refrigerator' : 'Shopping List'}
+                </span>
+                <h1 className="text-2xl font-semibold tracking-tight text-neutral-900 mt-0.5">
+                  {activeTab === 'fridge' ? 'たべごろ' : '買い物リスト'}
+                </h1>
               </div>
               <button 
-                onClick={() => setIsAddModalOpen(true)}
-                className="text-xs font-medium text-neutral-900 bg-neutral-200/60 hover:bg-neutral-200 px-3.5 py-1.5 rounded-full transition-all"
+                onClick={() => activeTab === 'fridge' ? setIsFridgeModalOpen(true) : setIsShoppingModalOpen(true)}
+                className="text-xs font-medium text-neutral-900 bg-neutral-200/70 hover:bg-neutral-200 px-3.5 py-1.5 rounded-full transition-all"
               >
                 ＋ 追加
               </button>
             </div>
 
-            {/* Filter Tabs */}
-            <div className="flex gap-2 overflow-x-auto no-scrollbar pt-1">
-              {CATEGORIES.map(cat => (
-                <button
-                  key={cat.id}
-                  onClick={() => setSelectedCategory(cat.id)}
-                  className={`whitespace-nowrap text-xs px-3 py-1.5 rounded-full transition-all duration-200 ${
-                    selectedCategory === cat.id 
-                      ? 'bg-neutral-900 text-white font-medium shadow-sm' 
-                      : 'text-neutral-500 hover:text-neutral-800'
-                  }`}
-                >
-                  {cat.name}
-                </button>
-              ))}
-            </div>
+            {/* 冷蔵庫タブの時のみカテゴリフィルターを表示 */}
+            {activeTab === 'fridge' && (
+              <div className="flex gap-2 overflow-x-auto no-scrollbar pt-1">
+                {CATEGORIES.map(cat => (
+                  <button
+                    key={cat.id}
+                    onClick={() => setSelectedCategory(cat.id)}
+                    className={`whitespace-nowrap text-xs px-3 py-1.5 rounded-full transition-all duration-200 ${
+                      selectedCategory === cat.id 
+                        ? 'bg-neutral-900 text-white font-medium shadow-sm' 
+                        : 'text-neutral-500 hover:text-neutral-800'
+                    }`}
+                  >
+                    {cat.name}
+                  </button>
+                ))}
+              </div>
+            )}
           </header>
 
           {/* Main Content */}
@@ -165,12 +184,16 @@
                 ) : (
                   filteredItems.map(item => {
                     const status = getItemStatus(item.expiryDate);
+                    const catName = CATEGORIES.find(c => c.id === item.category)?.name || '';
                     return (
-                      <div key={item.id} className="glass-card rounded-2xl p-4 border border-white/60 transition-all hover:scale-[1.005]">
+                      <div key={item.id} className="glass-card rounded-2xl p-4 border border-white/60 transition-all">
                         <div className="flex justify-between items-start">
                           <div>
-                            <h2 className="text-sm font-medium text-neutral-900 tracking-tight">{item.name}</h2>
-                            <p className="text-[11px] text-neutral-400 mt-0.5">{item.quantity}</p>
+                            <div className="flex items-center gap-2">
+                              <h2 className="text-sm font-medium text-neutral-900 tracking-tight">{item.name}</h2>
+                              <span className="text-[10px] text-neutral-400 bg-neutral-100 px-2 py-0.5 rounded-md">{catName}</span>
+                            </div>
+                            <p className="text-[11px] text-neutral-400 mt-1">{item.quantity}</p>
                           </div>
                           <span className={`text-[10px] font-medium px-2.5 py-1 rounded-full border ${status.style}`}>
                             {status.label}
@@ -213,9 +236,9 @@
                       <span className="text-sm font-medium text-neutral-800">{item.name}</span>
                       <button 
                         onClick={() => setShoppingList(prev => prev.filter(i => i.id !== item.id))}
-                        className="text-xs text-neutral-400 hover:text-neutral-900 transition"
+                        className="text-xs text-neutral-400 hover:text-neutral-900 font-medium transition"
                       >
-                        完了
+                        購入完了
                       </button>
                     </div>
                   ))
@@ -224,7 +247,7 @@
             )}
           </main>
 
-          {/* Bottom Navigation */}
+          {/* Navigation */}
           <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto glass-header border-t border-neutral-200/40 px-12 py-3.5 flex justify-around items-center z-30">
             <button 
               onClick={() => setActiveTab('fridge')} 
@@ -240,40 +263,79 @@
             </button>
           </nav>
 
-          {/* Modal */}
-          {isAddModalOpen && (
+          {/* 冷蔵庫追加モーダル */}
+          {isFridgeModalOpen && (
             <div className="fixed inset-0 z-50 bg-black/20 backdrop-blur-sm flex items-end sm:items-center justify-center p-4">
               <div className="bg-white/90 backdrop-blur-xl w-full max-w-md rounded-3xl p-6 shadow-2xl border border-white/40 space-y-4">
                 <div className="flex justify-between items-center">
-                  <h3 className="text-sm font-semibold text-neutral-900">食材の追加</h3>
-                  <button onClick={() => setIsAddModalOpen(false)} className="text-xs text-neutral-400 hover:text-neutral-800">キャンセル</button>
+                  <h3 className="text-sm font-semibold text-neutral-900">冷蔵庫へ追加</h3>
+                  <button onClick={() => setIsFridgeModalOpen(false)} className="text-xs text-neutral-400 hover:text-neutral-800">キャンセル</button>
                 </div>
                 
-                <form onSubmit={handleAddItem} className="space-y-3">
+                <form onSubmit={handleAddFridgeItem} className="space-y-3">
                   <input 
                     type="text" 
                     required 
-                    placeholder="名称 (例: 有機牛乳)" 
-                    value={formData.name} 
-                    onChange={e => setFormData({...formData, name: e.target.value})} 
-                    className="w-full bg-neutral-100/80 border-0 rounded-xl px-4 py-3 text-xs focus:ring-1 focus:ring-neutral-400 outline-none placeholder:text-neutral-400"
+                    placeholder="名称 (例: 牛乳)" 
+                    value={fridgeFormData.name} 
+                    onChange={e => setFridgeFormData({...fridgeFormData, name: e.target.value})} 
+                    className="w-full bg-neutral-100/80 border-0 rounded-xl px-4 py-3 text-xs focus:ring-1 focus:ring-neutral-400 outline-none"
                   />
+                  
+                  {/* 分類（カテゴリ）選択 */}
+                  <select 
+                    value={fridgeFormData.category} 
+                    onChange={e => setFridgeFormData({...fridgeFormData, category: e.target.value})}
+                    className="w-full bg-neutral-100/80 border-0 rounded-xl px-4 py-3 text-xs focus:ring-1 focus:ring-neutral-400 outline-none text-neutral-700"
+                  >
+                    <option value="fresh">生鮮食品</option>
+                    <option value="chilled">加工・乳製品</option>
+                    <option value="seasoning">調味料</option>
+                    <option value="other">その他</option>
+                  </select>
+
                   <input 
                     type="date" 
                     required 
-                    value={formData.expiryDate} 
-                    onChange={e => setFormData({...formData, expiryDate: e.target.value})} 
+                    value={fridgeFormData.expiryDate} 
+                    onChange={e => setFridgeFormData({...fridgeFormData, expiryDate: e.target.value})} 
                     className="w-full bg-neutral-100/80 border-0 rounded-xl px-4 py-3 text-xs focus:ring-1 focus:ring-neutral-400 outline-none text-neutral-700"
                   />
                   <input 
                     type="text" 
                     placeholder="分量 (例: 1本、250g)" 
-                    value={formData.quantity} 
-                    onChange={e => setFormData({...formData, quantity: e.target.value})} 
-                    className="w-full bg-neutral-100/80 border-0 rounded-xl px-4 py-3 text-xs focus:ring-1 focus:ring-neutral-400 outline-none placeholder:text-neutral-400"
+                    value={fridgeFormData.quantity} 
+                    onChange={e => setFridgeFormData({...fridgeFormData, quantity: e.target.value})} 
+                    className="w-full bg-neutral-100/80 border-0 rounded-xl px-4 py-3 text-xs focus:ring-1 focus:ring-neutral-400 outline-none"
                   />
-                  <button type="submit" className="w-full bg-neutral-900 text-white font-medium py-3 rounded-xl text-xs tracking-wide shadow-sm hover:bg-neutral-800 transition">
-                    登録する
+                  <button type="submit" className="w-full bg-neutral-900 text-white font-medium py-3 rounded-xl text-xs tracking-wide hover:bg-neutral-800 transition">
+                    冷蔵庫に登録
+                  </button>
+                </form>
+              </div>
+            </div>
+          )}
+
+          {/* 買い物リスト追加モーダル */}
+          {isShoppingModalOpen && (
+            <div className="fixed inset-0 z-50 bg-black/20 backdrop-blur-sm flex items-end sm:items-center justify-center p-4">
+              <div className="bg-white/90 backdrop-blur-xl w-full max-w-md rounded-3xl p-6 shadow-2xl border border-white/40 space-y-4">
+                <div className="flex justify-between items-center">
+                  <h3 className="text-sm font-semibold text-neutral-900">買い物リストへ追加</h3>
+                  <button onClick={() => setIsShoppingModalOpen(false)} className="text-xs text-neutral-400 hover:text-neutral-800">キャンセル</button>
+                </div>
+                
+                <form onSubmit={handleAddShoppingItem} className="space-y-3">
+                  <input 
+                    type="text" 
+                    required 
+                    placeholder="買うもの (例: バター)" 
+                    value={shoppingInput} 
+                    onChange={e => setShoppingInput(e.target.value)} 
+                    className="w-full bg-neutral-100/80 border-0 rounded-xl px-4 py-3 text-xs focus:ring-1 focus:ring-neutral-400 outline-none"
+                  />
+                  <button type="submit" className="w-full bg-neutral-900 text-white font-medium py-3 rounded-xl text-xs tracking-wide hover:bg-neutral-800 transition">
+                    買い物リストに登録
                   </button>
                 </form>
               </div>
