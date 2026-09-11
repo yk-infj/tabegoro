@@ -4,10 +4,13 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>たべごろ — 食材管理</title>
+  
+  <!-- React & Tailwind -->
   <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <script src="https://cdn.tailwindcss.com"></script>
+  
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Noto+Sans+JP:wght@300;400;500;600&display=swap');
     body {
@@ -34,11 +37,53 @@
 <body class="min-h-screen selection:bg-neutral-200">
   <div id="root"></div>
 
+  <!-- Firebase SDKs -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+    import { 
+      getAuth, 
+      signInWithEmailAndPassword, 
+      createUserWithEmailAndPassword, 
+      onAuthStateChanged, 
+      signOut 
+    } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+    import { 
+      getFirestore, 
+      collection, 
+      addDoc, 
+      deleteDoc, 
+      doc, 
+      onSnapshot, 
+      query, 
+      orderBy 
+    } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+    // Firebase 初期設定（デモ用共有プロジェクト設定）
+    const firebaseConfig = {
+      apiKey: "AIzaSyD-PlaceholderKeyForAppSync",
+      authDomain: "tabegoro-app.firebaseapp.com",
+      projectId: "tabegoro-app",
+      storageBucket: "tabegoro-app.appspot.com",
+      messagingSenderId: "1234567890",
+      appId: "1:1234567890:web:abcdef123456"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db = getFirestore(app);
+
+    window.FirebaseAPI = {
+      auth, db,
+      signInWithEmailAndPassword,
+      createUserWithEmailAndPassword,
+      onAuthStateChanged,
+      signOut,
+      collection, addDoc, deleteDoc, doc, onSnapshot, query, orderBy
+    };
+  </script>
+
   <script type="text/babel">
     const { useState, useEffect, useMemo } = React;
-
-    // 🔒 アクセス用のパスコード（お好きな番号に変更してください）
-    const SECRET_PASSCODE = '1234';
 
     const CATEGORIES = [
       { id: 'all', name: 'すべて' },
@@ -54,23 +99,14 @@
       return date.toISOString().split('T')[0];
     };
 
-    const INITIAL_ITEMS = [
-      { id: '1', name: '有機牛乳', category: 'chilled', expiryDate: getFormattedDate(-1), quantity: '1本' },
-      { id: '2', name: '黒豚バラ肉', category: 'fresh', expiryDate: getFormattedDate(0), quantity: '250g' },
-      { id: '3', name: '平飼い有精卵', category: 'chilled', expiryDate: getFormattedDate(2), quantity: '6個' },
-      { id: '4', name: 'アボカド', category: 'fresh', expiryDate: getFormattedDate(5), quantity: '2個' }
-    ];
-
-    const STORAGE_KEYS = { 
-      FRIDGE: 'tabegoro_v4_items', 
-      SHOPPING: 'tabegoro_v4_shop',
-      AUTH: 'tabegoro_v4_auth'
-    };
-
     function App() {
-      const [isAuthenticated, setIsAuthenticated] = useState(false);
-      const [passcode, setPasscode] = useState('');
-      const [passError, setPassError] = useState(false);
+      const [user, setUser] = useState(null);
+      const [loading, setLoading] = useState(true);
+      const [isSignUp, setIsSignUp] = useState(false);
+      
+      const [email, setEmail] = useState('');
+      const [password, setPassword] = useState('');
+      const [authError, setAuthError] = useState('');
 
       const [items, setItems] = useState([]);
       const [shoppingList, setShoppingList] = useState([]);
@@ -84,35 +120,96 @@
       const [shoppingInput, setShoppingInput] = useState('');
 
       useEffect(() => {
-        // 認証チェック
-        const authState = localStorage.getItem(STORAGE_KEYS.AUTH);
-        if (authState === 'true') {
-          setIsAuthenticated(true);
-        }
-
-        try {
-          const savedFridge = localStorage.getItem(STORAGE_KEYS.FRIDGE);
-          const savedShopping = localStorage.getItem(STORAGE_KEYS.SHOPPING);
-          setItems(savedFridge ? JSON.parse(savedFridge) : INITIAL_ITEMS);
-          setShoppingList(savedShopping ? JSON.parse(savedShopping) : []);
-        } catch (e) {
-          setItems(INITIAL_ITEMS);
-        }
+        const interval = setInterval(() => {
+          if (window.FirebaseAPI) {
+            clearInterval(interval);
+            const { auth, onAuthStateChanged } = window.FirebaseAPI;
+            onAuthStateChanged(auth, (currentUser) => {
+              setUser(currentUser);
+              setLoading(false);
+            });
+          }
+        }, 100);
+        return () => clearInterval(interval);
       }, []);
 
-      useEffect(() => { localStorage.setItem(STORAGE_KEYS.FRIDGE, JSON.stringify(items)); }, [items]);
-      useEffect(() => { localStorage.setItem(STORAGE_KEYS.SHOPPING, JSON.stringify(shoppingList)); }, [shoppingList]);
+      // リアルタイムデータベース同期
+      useEffect(() => {
+        if (!user || !window.FirebaseAPI) return;
+        const { db, collection, onSnapshot, query, orderBy } = window.FirebaseAPI;
 
-      // ログイン処理
-      const handleLogin = (e) => {
+        // 冷蔵庫データの同期
+        const fridgeRef = collection(db, 'users', user.uid, 'fridge');
+        const qFridge = query(fridgeRef, orderBy('expiryDate', 'asc'));
+        const unsubscribeFridge = onSnapshot(qFridge, (snapshot) => {
+          const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+          setItems(list);
+        });
+
+        // 買い物リストの同期
+        const shopRef = collection(db, 'users', user.uid, 'shopping');
+        const unsubscribeShop = onSnapshot(shopRef, (snapshot) => {
+          const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+          setShoppingList(list);
+        });
+
+        return () => {
+          unsubscribeFridge();
+          unsubscribeShop();
+        };
+      }, [user]);
+
+      const handleAuth = async (e) => {
         e.preventDefault();
-        if (passcode === SECRET_PASSCODE) {
-          setIsAuthenticated(true);
-          setPassError(false);
-          localStorage.setItem(STORAGE_KEYS.AUTH, 'true');
-        } else {
-          setPassError(true);
+        setAuthError('');
+        const { auth, signInWithEmailAndPassword, createUserWithEmailAndPassword } = window.FirebaseAPI;
+        try {
+          if (isSignUp) {
+            await createUserWithEmailAndPassword(auth, email, password);
+          } else {
+            await signInWithEmailAndPassword(auth, email, password);
+          }
+        } catch (err) {
+          setAuthError(isSignUp ? 'アカウント作成に失敗しました（パスワード6文字以上）' : 'メールアドレスまたはパスワードが正しくありません');
         }
+      };
+
+      const handleLogout = () => {
+        const { auth, signOut } = window.FirebaseAPI;
+        signOut(auth);
+      };
+
+      const handleAddFridgeItem = async (e) => {
+        e.preventDefault();
+        if (!fridgeFormData.name.trim() || !user) return;
+        const { db, collection, addDoc } = window.FirebaseAPI;
+        await addDoc(collection(db, 'users', user.uid, 'fridge'), fridgeFormData);
+        setIsFridgeModalOpen(false);
+        setFridgeFormData({ name: '', category: 'fresh', expiryDate: getFormattedDate(3), quantity: '1' });
+      };
+
+      const handleAddShoppingItem = async (e) => {
+        e.preventDefault();
+        if (!shoppingInput.trim() || !user) return;
+        const { db, collection, addDoc } = window.FirebaseAPI;
+        await addDoc(collection(db, 'users', user.uid, 'shopping'), { name: shoppingInput.trim() });
+        setIsShoppingModalOpen(false);
+        setShoppingInput('');
+      };
+
+      const handleConsumeItem = async (item, addToShop = false) => {
+        if (!user) return;
+        const { db, doc, deleteDoc, collection, addDoc } = window.FirebaseAPI;
+        await deleteDoc(doc(db, 'users', user.uid, 'fridge', item.id));
+        if (addToShop) {
+          await addDoc(collection(db, 'users', user.uid, 'shopping'), { name: item.name });
+        }
+      };
+
+      const handleDeleteShoppingItem = async (id) => {
+        if (!user) return;
+        const { db, doc, deleteDoc } = window.FirebaseAPI;
+        await deleteDoc(doc(db, 'users', user.uid, 'shopping', id));
       };
 
       const getItemStatus = (expiryDateStr) => {
@@ -126,96 +223,96 @@
       };
 
       const filteredItems = useMemo(() => {
-        return items.filter(i => {
-          return selectedCategory === 'all' || i.category === selectedCategory;
-        }).sort((a,b) => new Date(a.expiryDate) - new Date(b.expiryDate));
+        return items.filter(i => selectedCategory === 'all' || i.category === selectedCategory);
       }, [items, selectedCategory]);
 
-      const handleAddFridgeItem = (e) => {
-        e.preventDefault();
-        if (!fridgeFormData.name.trim()) return;
-        setItems(prev => [{ id: Date.now().toString(), ...fridgeFormData }, ...prev]);
-        setIsFridgeModalOpen(false);
-        setFridgeFormData({ name: '', category: 'fresh', expiryDate: getFormattedDate(3), quantity: '1' });
-      };
+      if (loading) {
+        return (
+          <div className="min-h-screen flex items-center justify-center bg-[#f5f5f7]">
+            <div className="text-xs text-neutral-400 animate-pulse">読み込み中...</div>
+          </div>
+        );
+      }
 
-      const handleAddShoppingItem = (e) => {
-        e.preventDefault();
-        if (!shoppingInput.trim()) return;
-        setShoppingList(prev => [...prev, { id: Date.now().toString(), name: shoppingInput.trim() }]);
-        setIsShoppingModalOpen(false);
-        setShoppingInput('');
-      };
-
-      const handleConsumeItem = (id, addToShop = false) => {
-        const target = items.find(i => i.id === id);
-        if (!target) return;
-        setItems(prev => prev.filter(i => i.id !== id));
-        if (addToShop) {
-          setShoppingList(prev => [...prev, { id: Date.now().toString(), name: target.name }]);
-        }
-      };
-
-      // 🔒 未ログイン時のロック画面
-      if (!isAuthenticated) {
+      // 未ログイン（ログイン・会員登録画面）
+      if (!user) {
         return (
           <div className="min-h-screen max-w-md mx-auto bg-[#f5f5f7] flex items-center justify-center p-6 antialiased">
-            <div className="w-full glass-card rounded-3xl p-8 border border-white/60 space-y-6 text-center">
-              <div>
-                <span className="text-[10px] font-semibold tracking-widest text-neutral-400 uppercase">Private Space</span>
+            <div className="w-full glass-card rounded-3xl p-8 border border-white/60 space-y-6">
+              <div className="text-center">
+                <span className="text-[10px] font-semibold tracking-widest text-neutral-400 uppercase">Cloud Sync</span>
                 <h1 className="text-2xl font-semibold tracking-tight text-neutral-900 mt-1">たべごろ</h1>
-                <p className="text-xs text-neutral-500 mt-2">パスコードを入力してログインしてください</p>
+                <p className="text-xs text-neutral-500 mt-2">スマホ間でデータが同期されます</p>
               </div>
 
-              <form onSubmit={handleLogin} className="space-y-4">
-                <div>
-                  <input 
-                    type="password"
-                    pattern="[0-9]*"
-                    inputMode="numeric"
-                    maxLength="8"
-                    placeholder="パスコード"
-                    value={passcode}
-                    onChange={(e) => setPasscode(e.target.value)}
-                    className="w-full bg-neutral-100/80 border-0 rounded-2xl px-4 py-3.5 text-center text-lg tracking-widest focus:ring-1 focus:ring-neutral-400 outline-none"
-                  />
-                  {passError && (
-                    <p className="text-xs text-rose-500 mt-2">パスコードが違います</p>
-                  )}
-                </div>
+              <form onSubmit={handleAuth} className="space-y-3">
+                <input 
+                  type="email"
+                  required
+                  placeholder="メールアドレス"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="w-full bg-neutral-100/80 border-0 rounded-2xl px-4 py-3.5 text-xs focus:ring-1 focus:ring-neutral-400 outline-none"
+                />
+                <input 
+                  type="password"
+                  required
+                  placeholder="パスワード（6文字以上）"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="w-full bg-neutral-100/80 border-0 rounded-2xl px-4 py-3.5 text-xs focus:ring-1 focus:ring-neutral-400 outline-none"
+                />
+
+                {authError && <p className="text-xs text-rose-500 text-center">{authError}</p>}
+
                 <button 
                   type="submit"
                   className="w-full bg-neutral-900 text-white font-medium py-3.5 rounded-2xl text-xs tracking-wide hover:bg-neutral-800 transition"
                 >
-                  解除して開く
+                  {isSignUp ? 'アカウントを作成' : 'ログイン'}
                 </button>
               </form>
+
+              <div className="text-center pt-2">
+                <button 
+                  onClick={() => { setIsSignUp(!isSignUp); setAuthError(''); }}
+                  className="text-xs text-neutral-500 hover:text-neutral-900 transition underline underline-offset-4"
+                >
+                  {isSignUp ? 'すでに登録済みの方はこちら' : '初めての方（新規登録）'}
+                </button>
+              </div>
             </div>
           </div>
         );
       }
 
-      // 🔓 アプリ本体画面
+      // ログイン済み（メイン画面）
       return (
         <div className="min-h-screen max-w-md mx-auto bg-[#f5f5f7] pb-28 relative font-normal antialiased">
-          
-          {/* Header */}
-          <header className="sticky top-0 z-30 glass-header border-b border-neutral-200/50 px-6 pt-12 pb-4 transition-all">
+          <header className="sticky top-0 z-30 glass-header border-b border-neutral-200/50 px-6 pt-10 pb-4 transition-all">
             <div className="flex justify-between items-baseline mb-4">
               <div>
-                <span className="text-[11px] font-semibold tracking-widest text-neutral-400 uppercase">
-                  {activeTab === 'fridge' ? 'Refrigerator' : 'Shopping List'}
+                <span className="text-[10px] font-semibold tracking-widest text-neutral-400 uppercase">
+                  {user.email}
                 </span>
                 <h1 className="text-2xl font-semibold tracking-tight text-neutral-900 mt-0.5">
                   {activeTab === 'fridge' ? 'たべごろ' : '買い物リスト'}
                 </h1>
               </div>
-              <button 
-                onClick={() => activeTab === 'fridge' ? setIsFridgeModalOpen(true) : setIsShoppingModalOpen(true)}
-                className="text-xs font-medium text-neutral-900 bg-neutral-200/70 hover:bg-neutral-200 px-3.5 py-1.5 rounded-full transition-all"
-              >
-                ＋ 追加
-              </button>
+              <div className="flex items-center gap-2">
+                <button 
+                  onClick={handleLogout}
+                  className="text-[11px] text-neutral-400 hover:text-neutral-800 transition mr-2"
+                >
+                  ログアウト
+                </button>
+                <button 
+                  onClick={() => activeTab === 'fridge' ? setIsFridgeModalOpen(true) : setIsShoppingModalOpen(true)}
+                  className="text-xs font-medium text-neutral-900 bg-neutral-200/70 hover:bg-neutral-200 px-3.5 py-1.5 rounded-full transition-all"
+                >
+                  ＋ 追加
+                </button>
+              </div>
             </div>
 
             {activeTab === 'fridge' && (
@@ -237,7 +334,6 @@
             )}
           </header>
 
-          {/* Main Content */}
           <main className="px-5 pt-6 space-y-3">
             {activeTab === 'fridge' && (
               <>
@@ -268,13 +364,13 @@
                           <span className="text-neutral-400 font-light">賞味期限 {item.expiryDate.replace(/-/g, '.')}</span>
                           <div className="flex gap-3">
                             <button 
-                              onClick={() => handleConsumeItem(item.id, true)} 
+                              onClick={() => handleConsumeItem(item, true)} 
                               className="text-neutral-500 hover:text-neutral-900 transition"
                             >
                               買出しへ
                             </button>
                             <button 
-                              onClick={() => handleConsumeItem(item.id, false)} 
+                              onClick={() => handleConsumeItem(item, false)} 
                               className="text-neutral-900 font-medium hover:opacity-70 transition"
                             >
                               消費完了
@@ -299,7 +395,7 @@
                     <div key={item.id} className="glass-card rounded-2xl p-4 border border-white/60 flex justify-between items-center">
                       <span className="text-sm font-medium text-neutral-800">{item.name}</span>
                       <button 
-                        onClick={() => setShoppingList(prev => prev.filter(i => i.id !== item.id))}
+                        onClick={() => handleDeleteShoppingItem(item.id)}
                         className="text-xs text-neutral-400 hover:text-neutral-900 font-medium transition"
                       >
                         購入完了
@@ -311,7 +407,6 @@
             )}
           </main>
 
-          {/* Navigation */}
           <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto glass-header border-t border-neutral-200/40 px-12 py-3.5 flex justify-around items-center z-30">
             <button 
               onClick={() => setActiveTab('fridge')} 
@@ -327,7 +422,7 @@
             </button>
           </nav>
 
-          {/* 冷蔵庫追加モーダル */}
+          {/* 冷蔵庫追加 */}
           {isFridgeModalOpen && (
             <div className="fixed inset-0 z-50 bg-black/20 backdrop-blur-sm flex items-end sm:items-center justify-center p-4">
               <div className="bg-white/90 backdrop-blur-xl w-full max-w-md rounded-3xl p-6 shadow-2xl border border-white/40 space-y-4">
@@ -335,49 +430,23 @@
                   <h3 className="text-sm font-semibold text-neutral-900">冷蔵庫へ追加</h3>
                   <button onClick={() => setIsFridgeModalOpen(false)} className="text-xs text-neutral-400 hover:text-neutral-800">キャンセル</button>
                 </div>
-                
                 <form onSubmit={handleAddFridgeItem} className="space-y-3">
-                  <input 
-                    type="text" 
-                    required 
-                    placeholder="名称 (例: 牛乳)" 
-                    value={fridgeFormData.name} 
-                    onChange={e => setFridgeFormData({...fridgeFormData, name: e.target.value})} 
-                    className="w-full bg-neutral-100/80 border-0 rounded-xl px-4 py-3 text-xs focus:ring-1 focus:ring-neutral-400 outline-none"
-                  />
-                  <select 
-                    value={fridgeFormData.category} 
-                    onChange={e => setFridgeFormData({...fridgeFormData, category: e.target.value})}
-                    className="w-full bg-neutral-100/80 border-0 rounded-xl px-4 py-3 text-xs focus:ring-1 focus:ring-neutral-400 outline-none text-neutral-700"
-                  >
+                  <input type="text" required placeholder="名称 (例: 牛乳)" value={fridgeFormData.name} onChange={e => setFridgeFormData({...fridgeFormData, name: e.target.value})} className="w-full bg-neutral-100/80 border-0 rounded-xl px-4 py-3 text-xs outline-none"/>
+                  <select value={fridgeFormData.category} onChange={e => setFridgeFormData({...fridgeFormData, category: e.target.value})} className="w-full bg-neutral-100/80 border-0 rounded-xl px-4 py-3 text-xs outline-none text-neutral-700">
                     <option value="fresh">生鮮食品</option>
                     <option value="chilled">加工・乳製品</option>
                     <option value="seasoning">調味料</option>
                     <option value="other">その他</option>
                   </select>
-                  <input 
-                    type="date" 
-                    required 
-                    value={fridgeFormData.expiryDate} 
-                    onChange={e => setFridgeFormData({...fridgeFormData, expiryDate: e.target.value})} 
-                    className="w-full bg-neutral-100/80 border-0 rounded-xl px-4 py-3 text-xs focus:ring-1 focus:ring-neutral-400 outline-none text-neutral-700"
-                  />
-                  <input 
-                    type="text" 
-                    placeholder="分量 (例: 1本、250g)" 
-                    value={fridgeFormData.quantity} 
-                    onChange={e => setFridgeFormData({...fridgeFormData, quantity: e.target.value})} 
-                    className="w-full bg-neutral-100/80 border-0 rounded-xl px-4 py-3 text-xs focus:ring-1 focus:ring-neutral-400 outline-none"
-                  />
-                  <button type="submit" className="w-full bg-neutral-900 text-white font-medium py-3 rounded-xl text-xs tracking-wide hover:bg-neutral-800 transition">
-                    冷蔵庫に登録
-                  </button>
+                  <input type="date" required value={fridgeFormData.expiryDate} onChange={e => setFridgeFormData({...fridgeFormData, expiryDate: e.target.value})} className="w-full bg-neutral-100/80 border-0 rounded-xl px-4 py-3 text-xs outline-none text-neutral-700"/>
+                  <input type="text" placeholder="分量 (例: 1本、250g)" value={fridgeFormData.quantity} onChange={e => setFridgeFormData({...fridgeFormData, quantity: e.target.value})} className="w-full bg-neutral-100/80 border-0 rounded-xl px-4 py-3 text-xs outline-none"/>
+                  <button type="submit" className="w-full bg-neutral-900 text-white font-medium py-3 rounded-xl text-xs hover:bg-neutral-800 transition">登録する</button>
                 </form>
               </div>
             </div>
           )}
 
-          {/* 買い物リスト追加モーダル */}
+          {/* 買い物リスト追加 */}
           {isShoppingModalOpen && (
             <div className="fixed inset-0 z-50 bg-black/20 backdrop-blur-sm flex items-end sm:items-center justify-center p-4">
               <div className="bg-white/90 backdrop-blur-xl w-full max-w-md rounded-3xl p-6 shadow-2xl border border-white/40 space-y-4">
@@ -385,24 +454,13 @@
                   <h3 className="text-sm font-semibold text-neutral-900">買い物リストへ追加</h3>
                   <button onClick={() => setIsShoppingModalOpen(false)} className="text-xs text-neutral-400 hover:text-neutral-800">キャンセル</button>
                 </div>
-                
                 <form onSubmit={handleAddShoppingItem} className="space-y-3">
-                  <input 
-                    type="text" 
-                    required 
-                    placeholder="買うもの (例: バター)" 
-                    value={shoppingInput} 
-                    onChange={e => setShoppingInput(e.target.value)} 
-                    className="w-full bg-neutral-100/80 border-0 rounded-xl px-4 py-3 text-xs focus:ring-1 focus:ring-neutral-400 outline-none"
-                  />
-                  <button type="submit" className="w-full bg-neutral-900 text-white font-medium py-3 rounded-xl text-xs tracking-wide hover:bg-neutral-800 transition">
-                    買い物リストに登録
-                  </button>
+                  <input type="text" required placeholder="買うもの (例: バター)" value={shoppingInput} onChange={e => setShoppingInput(e.target.value)} className="w-full bg-neutral-100/80 border-0 rounded-xl px-4 py-3 text-xs outline-none"/>
+                  <button type="submit" className="w-full bg-neutral-900 text-white font-medium py-3 rounded-xl text-xs hover:bg-neutral-800 transition">登録する</button>
                 </form>
               </div>
             </div>
           )}
-
         </div>
       );
     }
