@@ -37,6 +37,9 @@
   <script type="text/babel">
     const { useState, useEffect, useMemo } = React;
 
+    // 🔒 アクセス用のパスコード（お好きな番号に変更してください）
+    const SECRET_PASSCODE = '1234';
+
     const CATEGORIES = [
       { id: 'all', name: 'すべて' },
       { id: 'fresh', name: '生鮮食品' },
@@ -58,23 +61,35 @@
       { id: '4', name: 'アボカド', category: 'fresh', expiryDate: getFormattedDate(5), quantity: '2個' }
     ];
 
-    const STORAGE_KEYS = { FRIDGE: 'tabegoro_v3_items', SHOPPING: 'tabegoro_v3_shop' };
+    const STORAGE_KEYS = { 
+      FRIDGE: 'tabegoro_v4_items', 
+      SHOPPING: 'tabegoro_v4_shop',
+      AUTH: 'tabegoro_v4_auth'
+    };
 
     function App() {
+      const [isAuthenticated, setIsAuthenticated] = useState(false);
+      const [passcode, setPasscode] = useState('');
+      const [passError, setPassError] = useState(false);
+
       const [items, setItems] = useState([]);
       const [shoppingList, setShoppingList] = useState([]);
       const [activeTab, setActiveTab] = useState('fridge');
       const [selectedCategory, setSelectedCategory] = useState('all');
       
-      // モーダル状態
       const [isFridgeModalOpen, setIsFridgeModalOpen] = useState(false);
       const [isShoppingModalOpen, setIsShoppingModalOpen] = useState(false);
 
-      // フォーム状態
       const [fridgeFormData, setFridgeFormData] = useState({ name: '', category: 'fresh', expiryDate: getFormattedDate(3), quantity: '1' });
       const [shoppingInput, setShoppingInput] = useState('');
 
       useEffect(() => {
+        // 認証チェック
+        const authState = localStorage.getItem(STORAGE_KEYS.AUTH);
+        if (authState === 'true') {
+          setIsAuthenticated(true);
+        }
+
         try {
           const savedFridge = localStorage.getItem(STORAGE_KEYS.FRIDGE);
           const savedShopping = localStorage.getItem(STORAGE_KEYS.SHOPPING);
@@ -87,6 +102,18 @@
 
       useEffect(() => { localStorage.setItem(STORAGE_KEYS.FRIDGE, JSON.stringify(items)); }, [items]);
       useEffect(() => { localStorage.setItem(STORAGE_KEYS.SHOPPING, JSON.stringify(shoppingList)); }, [shoppingList]);
+
+      // ログイン処理
+      const handleLogin = (e) => {
+        e.preventDefault();
+        if (passcode === SECRET_PASSCODE) {
+          setIsAuthenticated(true);
+          setPassError(false);
+          localStorage.setItem(STORAGE_KEYS.AUTH, 'true');
+        } else {
+          setPassError(true);
+        }
+      };
 
       const getItemStatus = (expiryDateStr) => {
         const today = new Date(); today.setHours(0,0,0,0);
@@ -104,7 +131,6 @@
         }).sort((a,b) => new Date(a.expiryDate) - new Date(b.expiryDate));
       }, [items, selectedCategory]);
 
-      // 冷蔵庫アイテム追加
       const handleAddFridgeItem = (e) => {
         e.preventDefault();
         if (!fridgeFormData.name.trim()) return;
@@ -113,7 +139,6 @@
         setFridgeFormData({ name: '', category: 'fresh', expiryDate: getFormattedDate(3), quantity: '1' });
       };
 
-      // 買い物アイテム追加
       const handleAddShoppingItem = (e) => {
         e.preventDefault();
         if (!shoppingInput.trim()) return;
@@ -131,6 +156,46 @@
         }
       };
 
+      // 🔒 未ログイン時のロック画面
+      if (!isAuthenticated) {
+        return (
+          <div className="min-h-screen max-w-md mx-auto bg-[#f5f5f7] flex items-center justify-center p-6 antialiased">
+            <div className="w-full glass-card rounded-3xl p-8 border border-white/60 space-y-6 text-center">
+              <div>
+                <span className="text-[10px] font-semibold tracking-widest text-neutral-400 uppercase">Private Space</span>
+                <h1 className="text-2xl font-semibold tracking-tight text-neutral-900 mt-1">たべごろ</h1>
+                <p className="text-xs text-neutral-500 mt-2">パスコードを入力してログインしてください</p>
+              </div>
+
+              <form onSubmit={handleLogin} className="space-y-4">
+                <div>
+                  <input 
+                    type="password"
+                    pattern="[0-9]*"
+                    inputMode="numeric"
+                    maxLength="8"
+                    placeholder="パスコード"
+                    value={passcode}
+                    onChange={(e) => setPasscode(e.target.value)}
+                    className="w-full bg-neutral-100/80 border-0 rounded-2xl px-4 py-3.5 text-center text-lg tracking-widest focus:ring-1 focus:ring-neutral-400 outline-none"
+                  />
+                  {passError && (
+                    <p className="text-xs text-rose-500 mt-2">パスコードが違います</p>
+                  )}
+                </div>
+                <button 
+                  type="submit"
+                  className="w-full bg-neutral-900 text-white font-medium py-3.5 rounded-2xl text-xs tracking-wide hover:bg-neutral-800 transition"
+                >
+                  解除して開く
+                </button>
+              </form>
+            </div>
+          </div>
+        );
+      }
+
+      // 🔓 アプリ本体画面
       return (
         <div className="min-h-screen max-w-md mx-auto bg-[#f5f5f7] pb-28 relative font-normal antialiased">
           
@@ -153,7 +218,6 @@
               </button>
             </div>
 
-            {/* 冷蔵庫タブの時のみカテゴリフィルターを表示 */}
             {activeTab === 'fridge' && (
               <div className="flex gap-2 overflow-x-auto no-scrollbar pt-1">
                 {CATEGORIES.map(cat => (
@@ -281,8 +345,6 @@
                     onChange={e => setFridgeFormData({...fridgeFormData, name: e.target.value})} 
                     className="w-full bg-neutral-100/80 border-0 rounded-xl px-4 py-3 text-xs focus:ring-1 focus:ring-neutral-400 outline-none"
                   />
-                  
-                  {/* 分類（カテゴリ）選択 */}
                   <select 
                     value={fridgeFormData.category} 
                     onChange={e => setFridgeFormData({...fridgeFormData, category: e.target.value})}
@@ -293,7 +355,6 @@
                     <option value="seasoning">調味料</option>
                     <option value="other">その他</option>
                   </select>
-
                   <input 
                     type="date" 
                     required 
